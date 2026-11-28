@@ -8,10 +8,12 @@ import matplotlib.pyplot as plt
 from scipy.io import loadmat
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 
 MAT_PATH = "data/umist_cropped.mat"
 RANDOM_STATE = 42
 TRAIN, VAL, TEST = 0.70, 0.15, 0.15
+
 
 # Loading the dataset 
 def explore_mat(mat):
@@ -80,7 +82,6 @@ def plot_samples(images, labels, n_people=10, per_person=5, fname="sample_faces.
     plt.show()
 
 
-
 # TASK 2 - Stratified split + normalization
 
 def stratified_split(df):
@@ -131,6 +132,67 @@ def plot_distributions(y_all, y_train, y_val, y_test, fname="split_distribution.
     summary.to_csv("split_summary.csv")
 
 
+# TASK 3 - Dimensionality Reduction (PCA)
+
+def analyze_pca_variance(X_train_s, components=(10, 20, 50, 100), fname="pca_explained_variance.png"):
+    """Evaluate explained variance for multiple component counts and plot cumulative curve."""
+    print("\n=== Task 3: PCA Explained Variance Analysis ===")
+    for k in components:
+        pca_k = PCA(n_components=k, random_state=RANDOM_STATE).fit(X_train_s)
+        var_pct = np.sum(pca_k.explained_variance_ratio_) * 100
+        print(f"  n_components = {k:3d} -> Cumulative Explained Variance: {var_pct:.2f}%")
+
+    max_k = min(150, X_train_s.shape[0], X_train_s.shape[1])
+    pca_full = PCA(n_components=max_k, random_state=RANDOM_STATE).fit(X_train_s)
+    cum_var = np.cumsum(pca_full.explained_variance_ratio_) * 100
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 4.5))
+
+    axes[0].bar(range(1, 51), pca_full.explained_variance_ratio_[:50] * 100, color="tab:blue", alpha=0.85)
+    axes[0].set_title("Individual Explained Variance (Top 50 Components)")
+    axes[0].set_xlabel("Principal Component")
+    axes[0].set_ylabel("Explained Variance (%)")
+
+    axes[1].plot(range(1, max_k + 1), cum_var, linewidth=2, color="tab:green")
+    for k, col in zip(components, ["tab:red", "tab:orange", "tab:purple", "tab:brown"]):
+        if k <= max_k:
+            axes[1].axvline(k, color=col, linestyle="--", alpha=0.8, label=f"{k} comps ({cum_var[k-1]:.1f}%)")
+    axes[1].axhline(90, color="gray", linestyle=":", label="90% Threshold")
+    axes[1].set_title("Cumulative Explained Variance Ratio (Train Set)")
+    axes[1].set_xlabel("Number of Principal Components")
+    axes[1].set_ylabel("Cumulative Explained Variance (%)")
+    axes[1].legend(loc="lower right")
+
+    plt.tight_layout()
+    plt.savefig(fname, dpi=150)
+    plt.show()
+
+
+def plot_pca_2d(X_train_s, y_train, fname="pca_2d_projection.png"):
+    """Visualize the first 2 principal components colored by Person ID."""
+    pca_2d = PCA(n_components=2, random_state=RANDOM_STATE)
+    X_2d = pca_2d.fit_transform(X_train_s)
+    v1, v2 = pca_2d.explained_variance_ratio_ * 100
+
+    plt.figure(figsize=(8, 6))
+    sc = plt.scatter(X_2d[:, 0], X_2d[:, 1], c=y_train, cmap="tab20", s=30, alpha=0.85)
+    plt.colorbar(sc, label="Person ID (0-19)")
+    plt.title(f"2D PCA Projection of UMIST Faces (PC1: {v1:.1f}%, PC2: {v2:.1f}%)")
+    plt.xlabel(f"PC 1 ({v1:.1f}% variance)")
+    plt.ylabel(f"PC 2 ({v2:.1f}% variance)")
+    plt.tight_layout()
+    plt.savefig(fname, dpi=150)
+    plt.show()
+
+
+def apply_pca(X_train_s, X_val_s, X_test_s, n_components=50):
+    """Fit PCA on TRAIN only, then transform train, val, and test (no leakage)."""
+    pca = PCA(n_components=n_components, random_state=RANDOM_STATE)
+    return (pca.fit_transform(X_train_s),
+            pca.transform(X_val_s),
+            pca.transform(X_test_s),
+            pca)
+
 
 # Main
 if __name__ == "__main__":
@@ -163,3 +225,16 @@ if __name__ == "__main__":
                         y_train=y_train.values, y_val=y_val.values, y_test=y_test.values,
                         img_h=H, img_w=W)
     print("\nSaved: umist_splits.npz, split_summary.csv, sample_faces.png, split_distribution.png")
+
+    # ---- Task 3 (PCA Dimensionality Reduction) ----
+    analyze_pca_variance(X_train_s, components=[10, 20, 50, 100])
+    plot_pca_2d(X_train_s, y_train.values)
+
+    X_train_pca, X_val_pca, X_test_pca, pca = apply_pca(X_train_s, X_val_s, X_test_s, n_components=50)
+    print(f"\nPCA Reduced Shapes (n_components=50):")
+    print(f"  X_train_pca={X_train_pca.shape}, X_val_pca={X_val_pca.shape}, X_test_pca={X_test_pca.shape}")
+
+    np.savez_compressed("umist_pca_splits.npz",
+                        X_train_pca=X_train_pca, X_val_pca=X_val_pca, X_test_pca=X_test_pca,
+                        y_train=y_train.values, y_val=y_val.values, y_test=y_test.values)
+    print("Saved: umist_pca_splits.npz, pca_explained_variance.png, pca_2d_projection.png")
